@@ -1,9 +1,15 @@
+"""
+Streamlit Dashboard for COINTEG-VECM Engine.
+Displays cointegrated pairs and mean-reversion signals.
+"""
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from huggingface_hub import HfApi, hf_hub_download
 import json
 import config
+from us_calendar import USMarketCalendar
 
 st.set_page_config(page_title="P2Quant Cointegration Engine", page_icon="🔗", layout="wide")
 
@@ -59,6 +65,13 @@ def display_hero_card(pair: dict):
 st.sidebar.markdown("## ⚙️ Configuration")
 st.sidebar.markdown(f"**Data Source:** `{config.HF_DATA_REPO}`")
 st.sidebar.markdown(f"**Results Repo:** `{config.HF_OUTPUT_REPO}`")
+st.sidebar.divider()
+
+# Next trading day
+calendar = USMarketCalendar()
+next_trading = calendar.next_trading_day()
+st.sidebar.markdown(f"**📅 Next Trading Day:** {next_trading.strftime('%Y-%m-%d')}")
+
 st.sidebar.divider()
 st.sidebar.markdown("### 📊 Cointegration Parameters")
 st.sidebar.markdown(f"- Lookback: **{config.LOOKBACK_WINDOW} days**")
