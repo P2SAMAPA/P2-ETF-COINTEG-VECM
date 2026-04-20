@@ -60,18 +60,23 @@ def run_cointegration_analysis():
             # Fit VECM
             vecm_fit = analyzer.fit_vecm(recent_prices[[t1, t2]], hedge_ratio)
             
-            # Kalman spread
-            kalman_spread = analyzer.kalman_spread(recent_prices[[t1, t2]], hedge_ratio)
+            # Kalman spread (fallback to original spread if fails)
+            try:
+                kalman_spread = analyzer.kalman_spread(recent_prices[[t1, t2]], hedge_ratio)
+                if kalman_spread is None:
+                    kalman_spread = spread
+            except Exception:
+                kalman_spread = spread
             
-            # Half-life
-            half_life = analyzer.estimate_half_life(spread)
+            # Half-life (use Kalman spread for better estimate)
+            half_life = analyzer.estimate_half_life(kalman_spread)
             
             # Z-score
-            zscore_series = compute_zscore(spread)
+            zscore_series = compute_zscore(kalman_spread)
             current_zscore = zscore_series.iloc[-1]
             
             # Expected return (next day)
-            exp_ret = compute_expected_return(spread, half_life, current_zscore)
+            exp_ret = compute_expected_return(kalman_spread, half_life, current_zscore)
             
             # Direction: short if zscore > 0, long if zscore < 0
             direction = "SHORT" if current_zscore > 0 else "LONG"
@@ -91,9 +96,9 @@ def run_cointegration_analysis():
                 'expected_return': exp_ret,
                 'direction': direction,
                 'signal': signal,
-                'adf_pval': res['adf_pval'],
-                'trace_stat': res['trace_stat'],
-                'crit_val': res['crit_val'],
+                'adf_pval': res.get('adf_pval', 1.0),
+                'trace_stat': res.get('trace_stat', 0),
+                'crit_val': res.get('crit_val', 0),
                 'vecm_fitted': vecm_fit.get('fitted', False)
             })
         
