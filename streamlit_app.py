@@ -21,6 +21,8 @@ st.markdown("""
     .hero-pair { font-size: 3.5rem; font-weight: 800; }
     .signal-LONG { color: #28a745; font-weight: bold; }
     .signal-SHORT { color: #dc3545; font-weight: bold; }
+    .signal-NEUTRAL { color: #ffc107; font-weight: bold; }
+    .explain-box { background: #f8f9fa; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -47,16 +49,16 @@ def load_latest_results():
 
 def display_hero_card(pair: dict):
     signal = pair.get('signal', 'NEUTRAL')
-    signal_class = 'signal-LONG' if signal == 'LONG' else ('signal-SHORT' if signal == 'SHORT' else '')
+    signal_class = f"signal-{signal}" if signal in ['LONG', 'SHORT', 'NEUTRAL'] else ''
     st.markdown(f"""
     <div class="hero-card">
         <div style="font-size: 1.2rem; opacity: 0.8;">🔗 TOP MEAN-REVERSION PAIR</div>
         <div class="hero-pair">{pair['pair']}</div>
         <div style="margin-top: 1rem;">
-            Expected Return (next day): {pair['expected_return']*100:.3f}%<br>
+            Expected Return (next day, ann.): {pair['expected_return']*100:.3f}%<br>
             Z-Score: {pair['current_zscore']:.2f} | Half-Life: {pair['half_life']:.1f} days<br>
             Signal: <span class="{signal_class}">{signal}</span><br>
-            Hedge Ratio: {pair['hedge_ratio']:.4f} ({pair['ticker1']} = {pair['hedge_ratio']:.4f} * {pair['ticker2']})
+            Hedge Ratio: {pair['hedge_ratio']:.4f} ({pair['ticker1']} = {pair['hedge_ratio']:.4f} × {pair['ticker2']})
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -67,7 +69,6 @@ st.sidebar.markdown(f"**Data Source:** `{config.HF_DATA_REPO}`")
 st.sidebar.markdown(f"**Results Repo:** `{config.HF_OUTPUT_REPO}`")
 st.sidebar.divider()
 
-# Next trading day
 calendar = USMarketCalendar()
 next_trading = calendar.next_trading_day()
 st.sidebar.markdown(f"**📅 Next Trading Day:** {next_trading.strftime('%Y-%m-%d')}")
@@ -75,8 +76,8 @@ st.sidebar.markdown(f"**📅 Next Trading Day:** {next_trading.strftime('%Y-%m-%
 st.sidebar.divider()
 st.sidebar.markdown("### 📊 Cointegration Parameters")
 st.sidebar.markdown(f"- Lookback: **{config.LOOKBACK_WINDOW} days**")
-st.sidebar.markdown(f"- Z Entry: **{config.Z_SCORE_ENTRY}**")
-st.sidebar.markdown(f"- Z Exit: **{config.Z_SCORE_EXIT}**")
+st.sidebar.markdown(f"- Z Entry: **±{config.Z_SCORE_ENTRY}**")
+st.sidebar.markdown(f"- Z Exit: **±{config.Z_SCORE_EXIT}**")
 st.sidebar.divider()
 
 data = load_latest_results()
@@ -91,6 +92,39 @@ else:
 # --- Main Content ---
 st.markdown('<div class="main-header">🔗 P2Quant Cointegration Engine</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Johansen Test + VECM + Kalman Filter – Mean‑Reversion Pairs</div>', unsafe_allow_html=True)
+
+# --- Interpretation Guide (Expandable) ---
+with st.expander("📘 How to Interpret This Dashboard", expanded=False):
+    st.markdown("""
+    ### Understanding the Metrics
+    
+    **Pair (e.g., XLV/TLT)**  
+    The two ETFs that are cointegrated. A basket can be formed using the hedge ratio.
+    
+    **Hedge Ratio**  
+    `ETF1 = hedge_ratio × ETF2`  
+    The spread is `Spread = ETF1 - hedge_ratio × ETF2`.  
+    - If hedge ratio is **negative**, you go **long both** or **short both** to create a mean‑reverting basket.  
+    - Example: XLV = -4.27 × TLT means you buy 1 XLV and buy 4.27 TLT to form the basket.
+    
+    **Z‑Score**  
+    Measures how far the spread is from its 252‑day average, in standard deviations.  
+    - **|Z| > {entry}** → Entry signal (LONG if Z < -{entry}, SHORT if Z > +{entry})  
+    - **|Z| < {exit}** → Exit signal (close position)
+    
+    **Half‑Life**  
+    Estimated days for the spread to revert halfway to its mean. Shorter = faster mean reversion.
+    
+    **Expected Return**  
+    Model's forecast for the spread's one‑day change, **annualized**.  
+    Negative = spread expected to fall; Positive = spread expected to rise.
+    
+    **Signal**  
+    - **LONG** : Buy the basket (expect spread to rise)  
+    - **SHORT**: Sell the basket (expect spread to fall)  
+    - **NEUTRAL**: No trade recommended  
+    - **EXIT**: Close existing position
+    """.format(entry=config.Z_SCORE_ENTRY, exit=config.Z_SCORE_EXIT))
 
 if data is None:
     st.warning("No data available.")
@@ -113,6 +147,8 @@ with tab1:
             pick = top_picks.get(key)
             if pick:
                 display_hero_card(pick)
+            else:
+                st.info("No cointegrated pair found for this universe.")
             
             st.markdown("### All Cointegrated Pairs")
             pairs_list = all_pairs.get(key, [])
@@ -147,3 +183,5 @@ with tab2:
             if rows:
                 df_win = pd.DataFrame(rows)
                 st.dataframe(df_win, use_container_width=True, hide_index=True)
+            else:
+                st.info(f"No pairs for {key} in shrinking windows.")
