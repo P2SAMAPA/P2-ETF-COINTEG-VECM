@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.vector_ar.vecm import coint_johansen, VECM
 from statsmodels.tsa.stattools import adfuller
-from scipy.linalg import solve_continuous_lyapunov
 from typing import List, Tuple, Dict, Optional
+import config
 
 class CointegrationAnalyzer:
     def __init__(self, signif_level: float = 0.05, max_lags: int = 5):
@@ -40,40 +40,39 @@ class CointegrationAnalyzer:
             return {'is_cointegrated': False}
         
         # Johansen test
-        jres = coint_johansen(prices, det_order=0, k_ar_diff=1)
-        trace_stat = jres.lr1[0]
-        crit_val = jres.cvt[0, 1]  # 5% critical value
-        is_coint = trace_stat > crit_val
-        
-        if not is_coint:
-            return {'is_cointegrated': False}
-        
-        # Hedge ratio (first eigenvector)
-        hedge_ratio = jres.evec[:, 0]
-        hedge_ratio = hedge_ratio / hedge_ratio[0]  # normalize to first asset = 1
-        spread = prices.iloc[:, 0] - hedge_ratio[1] * prices.iloc[:, 1]
-        
-        # ADF test on spread
-        adf_stat, adf_pval, _, _, _, _ = adfuller(spread, autolag='AIC')
-        
-        return {
-            'is_cointegrated': True,
-            'trace_stat': trace_stat,
-            'crit_val': crit_val,
-            'hedge_ratio': hedge_ratio[1],
-            'spread': spread,
-            'adf_pval': adf_pval
-        }
+        try:
+            jres = coint_johansen(prices, det_order=0, k_ar_diff=1)
+            trace_stat = jres.lr1[0]
+            crit_val = jres.cvt[0, 1]  # 5% critical value
+            is_coint = trace_stat > crit_val
+            
+            if not is_coint:
+                return {'is_cointegrated': False}
+            
+            # Hedge ratio (first eigenvector)
+            hedge_ratio = jres.evec[:, 0]
+            hedge_ratio = hedge_ratio / hedge_ratio[0]  # normalize to first asset = 1
+            spread = prices.iloc[:, 0] - hedge_ratio[1] * prices.iloc[:, 1]
+            
+            # ADF test on spread
+            adf_stat, adf_pval, _, _, _, _ = adfuller(spread, autolag='AIC')
+            
+            return {
+                'is_cointegrated': True,
+                'trace_stat': trace_stat,
+                'crit_val': crit_val,
+                'hedge_ratio': hedge_ratio[1],
+                'spread': spread,
+                'adf_pval': adf_pval
+            }
+        except Exception as e:
+            return {'is_cointegrated': False, 'error': str(e)}
     
     def fit_vecm(self, prices: pd.DataFrame, hedge_ratio: float, lags: int = 1) -> Dict:
         """
         Fit a VECM to the cointegrated pair.
         Returns fitted model and parameters.
         """
-        spread = prices.iloc[:, 0] - hedge_ratio * prices.iloc[:, 1]
-        # VECM expects the cointegrating vector as beta
-        beta = np.array([[1.0], [-hedge_ratio]])
-        
         try:
             model = VECM(prices, k_ar_diff=lags, coint_rank=1, deterministic='ci')
             vecm_res = model.fit()
@@ -81,35 +80,38 @@ class CointegrationAnalyzer:
                 'fitted': True,
                 'model': model,
                 'result': vecm_res,
-                'alpha': vecm_res.alpha,  # adjustment speed
-                'beta': beta,
-                'spread': spread
+                'alpha': vecm_res.alpha,
+                'beta': np.array([[1.0], [-hedge_ratio]]),
             }
         except Exception as e:
             return {'fitted': False, 'error': str(e)}
     
-    def kalman_spread(self, prices: pd.DataFrame, hedge_ratio: float) -> pd.Series:
+    def kalman_spread(self, prices: pd.DataFrame, hedge_ratio: float) -> Optional[pd.Series]:
         """
         Estimate time-varying hedge ratio and spread using Kalman filter.
         Returns smoothed spread series.
         """
-        from pykalman import KalmanFilter
-        
-        y = prices.iloc[:, 0].values
-        x = prices.iloc[:, 1].values
-        
-        # State: [beta, spread_mean]
-        kf = KalmanFilter(
-            transition_matrices=np.eye(2),
-            observation_matrices=np.column_stack([x, np.ones(len(x))]),
-            initial_state_mean=[hedge_ratio, 0],
-            initial_state_covariance=np.eye(2) * 0.1,
-            transition_covariance=np.eye(2) * config.KALMAN_DELTA,
-            observation_covariance=1.0
-        )
-        state_means, _ = kf.filter(y)
-        spread_kalman = y - state_means[:, 0] * x - state_means[:, 1]
-        return pd.Series(spread_kalman, index=prices.index)
+        try:
+            from pykalman import KalmanFilter
+            
+            y = prices.iloc[:, 0].values
+            x = prices.iloc[:, 1].values
+            
+            # State: [beta, spread_mean]
+            kf = KalmanFilter(
+                transition_matrices=np.eye(2),
+                observation_matrices=np.column_stack([x, np.ones(len(x))]),
+                initial_state_mean=[hedge_ratio, 0],
+                initial_state_covariance=np.eye(2) * 0.1,
+                transition_covariance=np.eye(2) * config.KALMAN_DELTA,
+                observation_covariance=1.0
+            )
+            state_means, _ = kf.filter(y)
+            spread_kalman = y - state_means[:, 0] * x - state_means[:, 1]
+            return pd.Series(spread_kalman, index=prices.index)
+        except Exception as e:
+            print(f"Kalman filter failed: {e}")
+            return None
     
     def estimate_half_life(self, spread: pd.Series) -> float:
         """
@@ -127,7 +129,7 @@ class CointegrationAnalyzer:
         X = np.column_stack([np.ones(len(X)), X])
         
         beta = np.linalg.lstsq(X, y, rcond=None)[0]
-        ar_coef = 1 + beta[1]  # because Δy = α + β*y_{t-1} => AR(1) coef = 1+β
+        ar_coef = 1 + beta[1]
         if ar_coef <= 0 or ar_coef >= 1:
             return np.inf
         return -np.log(2) / np.log(ar_coef)
