@@ -2,7 +2,7 @@ name: Daily Cointegration Run
 
 on:
   schedule:
-    - cron: '0 19 * * 1-5'   # 7 PM UTC, Monday-Friday
+    - cron: '0 07 * * 1-5'   # 7 PM UTC, Monday-Friday
   workflow_dispatch:          # Manual trigger
 
 jobs:
